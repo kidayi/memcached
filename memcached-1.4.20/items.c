@@ -153,7 +153,7 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
 		
         /* Now see if the item is refcount locked */
         if (refcount_incr(&search->refcount) != 2) {
-			//增加后不等于2的情况，还原后不等于1
+			//增加后不等于2的情况，refcount_decr还原后不等于1
             refcount_decr(&search->refcount);
 			//rare--罕见的
             /* Old rare bug could cause a refcount leak. We haven't seen
@@ -206,8 +206,9 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
 			//初始化为
             it->slabs_clsid = 0;
         } else if ((it = slabs_alloc(ntotal, id)) == NULL) {
-			//search没过期，尝试分配内存，这里search引用计数原来为1，现在为2
-			//这里是分配失败的情况
+			//当前循环的search对象没过期，就尝试分配内存
+			//分配失败后进入这里，踢出这个还未过期的search
+			//这里search引用计数原来为1，现在为2
             tried_alloc = 1;
 			//evict--依法回收
             if (settings.evict_to_free == 0) {
@@ -236,7 +237,7 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
                  * eviction happens.
                  */
                 if (settings.slab_automove == 2)
-					//做内存页面balance
+					//当配置等于2时，启动内存页面balance
                     slabs_reassign(-1, id);
             }
         }
