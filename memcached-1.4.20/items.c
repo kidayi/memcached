@@ -132,6 +132,7 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
     search = tails[id];
     /* We walk up *only* for locked items. Never searching for expired.
      * Waste of CPU for almost all deployments */
+	//循环到tries==0时终止
     for (; tries > 0 && search != NULL; tries--, search=search->prev) {
         if (search->nbytes == 0 && search->nkey == 0 && search->it_flags == 1) {
             /* We are a crawler, ignore it. */
@@ -147,10 +148,12 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
         //accidentally--意外的，grab--夺取，bail--保释
 		//item_trylock函数--寻找锁然后trylock
 		if (hv == cur_hv || (hold_lock = item_trylock(hv)) == NULL)
+			//等于时跳出本次循环
             continue;
 		
         /* Now see if the item is refcount locked */
         if (refcount_incr(&search->refcount) != 2) {
+			//增加后不等于2的情况，还原后不等于1
             refcount_decr(&search->refcount);
 			//rare--罕见的
             /* Old rare bug could cause a refcount leak. We haven't seen
@@ -178,8 +181,11 @@ item *do_item_alloc(char *key, const size_t nkey, const int flags,
         /* Expired or flushed */
 		//到这里表示refcount原来等于1，现在等于2的情况
 		//和上面的判定条件不同
+		//search->exptime < current_time--过期时间到了
         if ((search->exptime != 0 && search->exptime < current_time)
 				//oldest_live表示在oldest_live时间之前的数据失效
+				//search->time最后访问时间
+				//oldest_live > current_time时，不在这个算法中
 				|| (search->time <= oldest_live && oldest_live <= current_time)) {
             //search对象过期了
 			itemstats[id].reclaimed++;
@@ -420,6 +426,7 @@ void do_item_unlink(item *it, const uint32_t hv) {
 }
 
 /* FIXME: Is it necessary to keep this copy/pasted code? */
+//从hash桶和LRU中去掉，然后调用do_item_remove
 void do_item_unlink_nolock(item *it, const uint32_t hv) {
     MEMCACHED_ITEM_UNLINK(ITEM_key(it), it->nkey, it->nbytes);
     if ((it->it_flags & ITEM_LINKED) != 0) {
@@ -437,10 +444,12 @@ void do_item_unlink_nolock(item *it, const uint32_t hv) {
 		//从lru双向链表中去掉
         item_unlink_q(it);
 		
+		//引用计数减一，然后根据结果判断是否free
         do_item_remove(it);
     }
 }
 
+//引用计数减一，然后根据结果判断是否free
 void do_item_remove(item *it) {
     MEMCACHED_ITEM_REMOVE(ITEM_key(it), it->nkey, it->nbytes);
     assert((it->it_flags & ITEM_SLABBED) == 0);
